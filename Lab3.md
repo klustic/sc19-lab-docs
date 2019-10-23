@@ -2,26 +2,26 @@
 
 ## Introduction
 
-In the last lab, we found and exploited an XXE bug in the application. Using that bug, we were able to disclose source code of the application, which had the HMAC key hard-coded.
+In the previous lab, we found and exploited an XXE bug in the application. Using that bug, we were able to disclose source code of the application, which had an HMAC key hard-coded.
 
-In this lab, we will use that HMAC key to generate a valid, malicious pickle data to gain remote code execution in the serverless container environment.
+In this lab, we will use that HMAC key to generate a signed, malicious pickle blob to gain code execution in the Lambda container.
 
 ## Methodology
 
-We discovered early on (and confirmed via our source code l00t) that the application parses XML import files, grabs `data` and `hmac` elements, validates the data using the HMAC, and then unpickles the data. If the data doesn't pass the HMAC check, it is rejected. Now that we have an HMAC key, we can leverage a "feature" of Python's pickle deserialization to gain code execution! In this lab, we'll:
+We discovered early on (and confirmed via our source code l00t) that the application parses XML import files, extracts `data` and `hmac` elements, validates the data using the HMAC, and then unpickles the data. If the data doesn't pass the HMAC check, it is rejected - that's a perfectly valid way to mitigate deserialization issues. Unfortunately we were able to steal the HMAC key via another vulnerability, and we can now leverage a "feature" of Python's pickle deserialization to gain code execution. In this lab, we'll:
 
-1. Craft a pickle deserialization exploit
+1. Craft a pickle deserialization exploit that steals environment variables
 2. Generate an HMAC digest of that exploit that will pass the check
 3. Automate payload generation with a Python script
 4. Upload our exploit payload and observe the results
 
 ## Crafting a pickle deserialization exploit
 
-The primary goal of our exploit is going to be to read the environment; because sensitive and dynamic data is often passed into the container via the environment, we are likely to find something useful there.
+The primary goal of our exploit will be to read the environment; because sensitive and dynamic data is often passed into the container via the environment, we are likely to find something useful there.
 
-The Python `pickle` library is a serialization library that allows you to serialize Python objects; that is, flatten the object to a byte string, for transport to another Python process. Once it reaches the destination, it can be deserialized and used as an object again.
+The Python `pickle` library is a serialization library that allows you to serialize Python objects; that is, flatten the object to a byte string, for transport to a remote Python interpreter. Once it reaches the destination, it can be deserialized and used as an object again.
 
-Let's deserialize our payload from before. Grab the body of the `data` element from your exported to-do list, open a Python interpreter, and deserialize it as follows:
+To see how this works in practice, let's deserialize our payload from before. Grab the body of the `data` element from your exported to-do list, open a Python interpreter, and deserialize it as follows:
 
 ```
 >>> import pickle
@@ -33,9 +33,9 @@ Let's deserialize our payload from before. Grab the body of the `data` element f
 
 The `data` element contains a list of all the tasks we exported, in a pickle-serialized format. Easy enough!
 
-Before we craft our payload, let's revisit how the pickle-deserialization vulnerability works. When an object is being pickled, if Python doesn't know how to pickle it (i.e. it is not a type from the standard library), the Pickle library looks for a class method called `__reduce__` that describes how to pickle the object. The function returns a tuple, which among other things, contains a function that serves as an entrypoint when the object is being unpickled.
+Before we craft our payload, let's revisit how the pickle-deserialization vulnerability works. When an object is being pickled, the pickling routine calls a class method `__reduce__` that returns a function (and its arguments) to be used as an entrypoint when the object is being unpickled (or, "deserialized").
 
-You can read more [here](https://docs.python.org/2/library/pickle.html?highlight=__reduce__#object.__reduce__), but the gist is that we can craft a Python class that implements `__reduce__` in a way that will cause the interpreter on the serverless application to spit out a message. Let's try an initial payload:
+With this background, we can craft a Python class that implements `__reduce__` such that the interpreter executes arbitrary code when it deserializes our Pickle object. Let's try a simple payload:
 
 ```
 import cPickle
@@ -53,11 +53,11 @@ def main():
 main()
 ```
 
-Let's take a look at what this does.
+Let's break that down...
 
-While `__reduce__` can return a 5-tuple, only the first two items are required:
+The `__reduce__` method in this example returns a 2-tuple containing:
 
-1. A function that the pickle library should call when deserializing the object on target
+1. A function that the pickle library calls when deserializing the object on target
 2. Arguments to that function
 
 In this case, we will use  `subprocess.check_output` to invoke a shell and print the string "Hello World".
@@ -66,7 +66,9 @@ Run this Python script to see what it prints.
 
 ## Generating an HMAC to make it legit
 
-Since we were able to capture the HMAC key in the previous lab, let's generate an HMAC digest of this pickle payload, to ensure the application will accept it for deserialization. Remember, if the XML doesn't contain all valid fields or contains invalid fields (including invalid Pickle data), we'll never reach the deserialization code.
+Since we were able to capture the HMAC key in the previous lab, let's generate an HMAC digest of this pickle payload. Together with a valid HMAC, our malicious payload will pass the check and be considered valid by the Import function.
+
+Remember, if the XML doesn't contain all valid fields or contains any invalid fields (including invalid Pickle data), we'll never reach the deserialization code.
 
 Update your Python payload generator to calculate the HMAC, using our captured key:
 
@@ -100,7 +102,7 @@ Running that script should provide a valid document that we can import to our to
 
 ## Uploading the payload
 
-Run the Python script to generate your pickle exploit payload, save the payload to disk:
+Run the Python script to generate your pickle exploit, saving the payload to disk:
 
 ```
 python make_pickle.py >Desktop/pickle_exploit.xml
@@ -113,7 +115,9 @@ Now upload it using the Import functionality:
 
 It worked!
 
-Let's use this code execution to read the environment. Change your pickle exploit payload to run the command `/bin/sh -c declare`; this will dump the environment back to us! Upload your payload, and see the results:
+Let's use this code execution to read the environment. Change your pickle exploit payload to run the command `/bin/sh -c declare`; this will dump the environment back to us!
+
+Upload your payload to see the result:
 
 ![Getting the environment via pickle deserialization](./images/3-env.png)
 
@@ -121,11 +125,11 @@ See anything interesting?
 
 ## Extra credit
 
-See if you can find the names of all the lists people have created for this workshop.
+Can you learn the names of all the lists people have created today?
 
 ## Recap
 
-We were able to leverage pickle deserialization to gain code execution on the serverless container, which enabled us to leak AWS secrets from the environment. In order to have the application deserialize that pickle data, we needed to generate a valid HMAC digest using the key leaked in Lab 2.
+We were able to leverage pickle deserialization to gain code execution on the Lambda container, leaking AWS secrets from the environment. In order to get the backend code to deserialize our pickle exploit, we needed to generate a valid HMAC digest using the key leaked in Lab 2.
 
 ## Vulnerabilities covered
 

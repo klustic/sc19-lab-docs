@@ -8,16 +8,16 @@ In this lab, we will explore how to use that SQS URL.
 
 ## Methodology
 
-Let's try to find an explanation for the SQS URL in the environment, and interact with the queue if possible. We will
+Let's try to find an explanation for the SQS URL, and interact with the queue if possible. We will
 
 1. Look for clues in the source code we captured in Lab 2
-2. Decide the best way to send on the queue
+2. Decide the best way to put messages on the queue
 3. Craft a payload
 4. Send the payload for glorious victory
 
 ## Code Review
 
-If you didn't save a copy of the source code from Lab 2, go back and do that now! ->> [Lab 2](./Lab2.md)
+If you didn't save a copy of the backend source code from Lab 2, go back and do that now! ->> [Lab 2](./Lab2.md)
 
 Looking through the code, we can find handlers for the following API calls:
 - Add
@@ -32,16 +32,16 @@ All of these handlers have corresponding API calls in the To Do list frontend.
 
 There's one handler that doesn't though: `lambda_handler_hashtagWinning()`. Take a moment to read through the source code for that function, and think about what it is doing.
 
-The comment is pretty telling:
+This comment is pretty telling:
 ```
 Lambda handler for #WINNING operations (do NOT publish this endpoint in the frontend code. FOR ADMIN USE ONLY!!)
 ```
 
-In this function, a message is sent on an SQS queue with the handle of a winner (whatever that means). We can infer a few things from this:
+In this function, a message is sent on an SQS queue with the handle of a winner, whatever that means. We can infer a few things from this:
 
 - The role assigned to the Import function is probably allowed to write to at least this queue
-- The queue may be used to invoke another Lambda function
-- Submitting your handle to this queue is probably a good thing
+- The queue may be used to trigger another Lambda function
+- Submitting your handle to this queue is probably a good idea...
 
 ## Sending on the queue
 
@@ -56,15 +56,15 @@ We have two options for sending on this queue, and one is objectively better tha
   - Craft and execute your SQS SendMessage payload using the pickle deserialization vuln from Lab3
   - (which results in a totally normal looking log entry)
 
-The rest of this lab will use #2.
+We're going to implement #2.
 
-By default, the AWS Lambda containers don't have the AWS CLI installed. So, we're going to craft a pickle payload that leverage the Python AWS client, `boto3`, to put a message onto the queue directly from the Import function.
+By default, the AWS Lambda container doesn't have the AWS CLI installed. So, we're going to craft a pickle payload that leverage the Python AWS client, `boto3`, to put a message onto the queue directly from the Import function.
 
 ## Crafting a payload
 
 > Extra Credit: Ignore this section and build your own payload!
 
-Update your pickle exploit from Lab 3, to execute the following command:
+Update your pickle exploit from Lab 3 to execute the following Python code:
 
 ```
 /usr/bin/python -c "import boto3, os, json; client = boto3.client('sqs'); r = client.send_message(QueueUrl=os.getenv('VICTORY_QUEUE_URL'), MessageBody=json.dumps({'handle': 'REPLACEME_WITH_YOUR_HANDLE_FOR GLORIOUS_VICTORY'})); print('Sent SQS message, id=' + r['MessageId'])"
@@ -78,7 +78,7 @@ Let's walk through what this does.
 - `send_message`: Send your handle over the queue (make sure you put your handle in there)
 - `print`: Send some evidence back to the browser that the message was sent
 
-With your pickle generator script updated, build the XML file:
+Now build the XML file:
 
 ![AWS SQS SendMessage pickle deserialization payload](./images/4-sqs-payload.png)
 
@@ -88,13 +88,13 @@ Finally, upload your XML payload to the web app via the Import functionality. It
 
 ![Upload pickle deserialization payload](./images/4-payload-sent.png)
 
-Verify with me that your handle hit the queue!
+Verify with the instructor that your handle hit the queue!
 
 ## Recap
 
-We discovered by looking through the handler code that a follow-on action is performed when sending a request to an unknown administrative API Gateway endpoint. You bypassed that restriction by sending your handle directly to the SQS queue, which in real life likely would have triggered another Lambda function that designates you a "winner".
+We discovered by looking through the handler code that a follow-on action is taken when an unknown administrative API Gateway endpoint is requested. You bypassed the unknown API endpoint by sending your handle directly to the queue, which in a more complex application would likely would have triggered another Lambda function that designated you a "winner".
 
-We coerced the Import function to do that for us, working smarter, not harder!
+We coerced the Import function to do all of that for us; work smarter, not harder!
 
 ## Vulnerabilities covered
 

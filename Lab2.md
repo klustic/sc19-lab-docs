@@ -2,17 +2,17 @@
 
 ## Introduction
 
-In the last lab, we discovered that the export function created a backup of our to-do list items and served the backup as an XML document. We also noticed that the backed up data appeared to be validated on the serverside with an HMAC digest.
+In the previous lab, we discovered that the export function creates a backup of our to-do list items and serves the backup as an XML document. We also noticed that the exported data appears to be validated on the backend with an HMAC digest.
 
 In this lab, you will find and exploit an XXE vulnerability, and use that to find the HMAC signing key.
 
 ## Methodology
 
-Generally speaking, where an application is performing a lot of processing on input data, there is a lot that can go wrong. In the case of this application, the import functionality parses XML and then pickle data, so let's learn a little bit more about
+Generally speaking, where an application is processing external input, the developer has to take particular care to handle input safely. In the case of this application, the import functionality parses XML and then pickle data, so let's explore:
 
-1. What we're able to do
+1. What we're able to do with specially crafted data
 2. What kind of feedback we can get from the application
-3. Whether there's an XXE bug in the XML parsing
+3. Whether there's an XXE bug in the XML handler
 4. What we can access
 
 ## Learning the Import function
@@ -36,19 +36,19 @@ Let's see what happens if we change the format of our XML document. Change the `
 
 So, we get an error and processing stops if we include an invalid tag (i.e. other than `hmac`, `data`, and `backup`).
 
-Interestingly, it seems like the error message includes the content of the invalid tag. Let's test that theory, by changing that outer tag back to `backup` and adding a new element:
+Interestingly, it seems like the error message includes the content of the invalid element. Let's test that theory, by changing that outer tag back to `backup` and adding a new element:
 
 ![Invalid tag with data](./images/2-invalid-tag.png)
 
 ![Data reflected in error message](./images/2-invalid-tag-error-1.png)
 
-Let's see what happens if we exclude some required tags. Delete the `data` and `hmac` elements and import your file. What happened?
+To test the application's behavior when critical elements are missing, delete the `data` and `hmac` elements and import your XML file. What happened?
 
 ## Discovering an XXE bug
 
-From previous work, we know that when an XML document is imported we can include invalid tags and the parser will return an error that include the body of that element. This may be a good candidate for XXE!
+From our previous work, we know that we can include and invalid element and the handler will return an error that includes the body of that element. This means that we can get the application to cough up data it thinks doesn't belong, which may make it a good candidate for XXE!
 
-In an XML External Entity vulnerability, a vulnerable XML parser is coerced into including a resource from the network or from disk into the XML document. Let's see if we can make that happen here.
+If an application is vulnerable to XXE, the XML parser is coerced into reading a resource from the network or from disk and echoing those contents back to the attacker. Let's see if we can make that happen here.
 
 Create a malicious payload:
 
@@ -58,19 +58,19 @@ Create a malicious payload:
   <!ELEMENT msg ANY >
   <!ENTITY data SYSTEM "file:///etc/hostname" >]><msg>&data;</msg>
 ```
-In this payload, `msg` is declared as an element and `data` is declared as a SYSTEM resource. If the XML parser is vulnerable, it will load the `/etc/hostname` file into the `<msg>` element.
+In this payload, `msg` is declared as an element and `data` is declared as a SYSTEM resource. If the XML parser is vulnerable, it will load the contents of `/etc/hostname` into the `<msg>` element.
 
 Let's upload this payload:
 
 ![No such file](./images/2-no-such-file.png)
 
-This is promising! Although the file we requested didn't exist, it looks like the parser is configured in a vulnerable way and is trying to load files from disk.
+This is promising! Although the file we requested didn't exist, it looks like the handler tried to load our file from disk.
 
 Let's try another file. Modify your XXE payload to read `/etc/hosts`, and upload it. What happened?
 
 ![Hosts file](./images/2-etc-hosts.png)
 
-A more dramatic file to read would be `/etc/passwd`. See if you can modify the XXE payload to load that file.
+See if you can modify your XXE payload to read `/etc/passwd`.
 
 A cleaner way to look at the data coming back, since newlines aren't rendered in the DOM, is to look at the HTML in your browser's inspector:
 
@@ -80,7 +80,7 @@ A cleaner way to look at the data coming back, since newlines aren't rendered in
 
 At this point, we can use the XXE to read files on disk. Let's see what we can find!
 
-We know that serverless functions live in containers, and secrets are injected into those containers via the environment and the filesystem. Let's see if we can read environments variables via `/proc/self/environ` (upload these XML payloads):
+We know that serverless functions live in containers, and secrets are injected into those containers via the environment and the filesystem. Let's attempt to read environments variables via `/proc/self/environ`:
 
 ```
 <?xml version="1.0" encoding="ISO-8859-1"?>
@@ -102,7 +102,7 @@ Let's look for special mounted files:
 
 ![Mounts](./images/2-mounts.png)
 
-There are no out-of-the-ordinary files mounted here. Notice the `/var/task` mount, that's where Lambda stores the source code for the serverless application. Let's try to find that, as it may contain useful secrets.
+There are no out-of-the-ordinary files mounted here. Notice the `/var/task` mount, that's the directory Lambda uses to store the source code for the application. Let's try to find that source code; finding it will shed more light on how this application works on the backend, and the source code could potentially contain useful secrets.
 
 In the [AWS SAM examples](https://github.com/awslabs/serverless-application-model/tree/master/examples/apps/hello-world-python), the code for Python examples is often put in a file called `lambda_function.py`. Let's try searching for that:
 
@@ -119,11 +119,11 @@ Using that XXE vulnerability, we're able to disclose the source code of the serv
 
 ![Source code](./images/2-source-code.png)
 
-Scrolling through, you can read the Python code behind every bit of functionality in the application. No more guessing! Do you see anything immediately valuable?
+You can read the Python underlying the serverless backend, and better understand how the application works. No more guessing! Do you see anything immediately valuable?
 
 ## Recap
 
-By poking around, we were able to determine that including invalid XML elements would cause the web app to spit out the tag and contents of the element. We were able to leverage that to read files from disk in the container via XML external entities (XXE) vulnerability in the XML parser.
+By poking around, we were able to determine that including invalid XML elements would cause the web app to spit out the tag and contents of the element. We were able to leverage that to read files from disk in the container via an XML external entities (XXE) vulnerability in the XML handling code.
 
 Finally, we were able to access the source code for the entire serverless application, which contains a secret!
 
@@ -134,4 +134,4 @@ Finally, we were able to access the source code for the entire serverless applic
 | A3:2017 | Sensitive Data Exposure | Sensitive data on disk is leaked via XXE |
 | A4:2017 | XML External Entities (XXE) | The import functionality is vulnerable to XXE |
 | A6:2017 | Security Misconfiguration | An HMAC key is stored/exposed in the function's source code |
-| A9:2017 | Using Components with Known Vulnerabilities | XXE in xml.sax library is mitigated in Python 3.7.1 | 
+| A9:2017 | Using Components with Known Vulnerabilities | XXE in xml.sax library is mitigated in Python 3.7.1 |

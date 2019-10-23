@@ -10,7 +10,7 @@ The OWASP Top Ten list has long been a staple when understanding trends in web a
 
 You should be able to do most of this work with your browser and a text editor.
 
-The later labs will require Python to be installed:
+The later labs will require Python (2.7) to be installed:
 - [Windows](https://www.python.org/ftp/python/2.7.17/python-2.7.17.amd64.msi)
 - [Mac](https://www.python.org/ftp/python/2.7.17/python-2.7.17-macosx10.9.pkg)
 - Linux - use your package manager
